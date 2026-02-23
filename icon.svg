@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#0f172a"/>
+  <rect x="40" y="40" width="432" height="432" rx="80" fill="#1a2235"/>
+  <text x="256" y="320" font-size="220" text-anchor="middle" font-family="system-ui">🔥</text>
+  <text x="256" y="460" font-size="72" font-weight="900" text-anchor="middle" font-family="system-ui, Arial" fill="#22c55e" letter-spacing="-2">OS</text>
+</svg>
