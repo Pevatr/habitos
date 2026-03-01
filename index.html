@@ -62,6 +62,7 @@ body::before{
 .screens{flex:1;overflow:hidden;position:relative;z-index:1;}
 .screen{
   position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;
+  touch-action:pan-y;
   padding:14px 16px 20px;display:none;-webkit-overflow-scrolling:touch;
 }
 .screen.active{display:block;animation:screenIn .2s ease;}
@@ -757,8 +758,10 @@ function toggleHabitState(id, action){
 let _drag = { el:null, idx:null, clone:null, over:null, ox:0, oy:0, moved:false };
 
 function _dragEnd(commit){
+  // Obnoví scroll na .screen
+  document.querySelectorAll('.screen').forEach(s=>s.style.overflowY='');
   if(_drag.clone){ _drag.clone.remove(); _drag.clone=null; }
-  if(_drag.el){ _drag.el.classList.remove('dragging'); _drag.el.releasePointerCapture && _drag.el._pid && _drag.el.releasePointerCapture(_drag.el._pid); }
+  if(_drag.el){ _drag.el.classList.remove('dragging'); }
   if(_drag.over){ _drag.over.classList.remove('drag-over'); }
   if(commit && _drag.over && _drag.idx!==null){
     const ti=parseInt(_drag.over.dataset.idx);
@@ -789,14 +792,15 @@ function renderManage(){
 
     div.addEventListener('pointerdown', e=>{
       e.preventDefault();
+      e.stopPropagation();
       div.setPointerCapture(e.pointerId);
-      div._pid=e.pointerId;
       const r=div.getBoundingClientRect();
-      _drag.el=div; _drag.idx=idx; _drag.moved=false;
+      _drag.el=div; _drag.idx=idx; _drag.moved=false; _drag.over=null;
       _drag.ox=e.clientX-r.left; _drag.oy=e.clientY-r.top;
-      _drag.over=null;
 
-      // Vytvoř klon
+      // Zablokuj scroll na .screen během dragu
+      document.querySelectorAll('.screen').forEach(s=>s.style.overflowY='hidden');
+
       _drag.clone=div.cloneNode(true);
       _drag.clone.style.cssText=`
         position:fixed;z-index:9999;pointer-events:none;
@@ -817,34 +821,23 @@ function renderManage(){
       _drag.moved=true;
       div.classList.add('dragging');
 
-      // Pohyb klonu
       _drag.clone.style.left=(e.clientX-_drag.ox)+'px';
       _drag.clone.style.top =(e.clientY-_drag.oy)+'px';
 
-      // Najdi cíl
       _drag.clone.style.display='none';
       const hit=document.elementFromPoint(e.clientX, e.clientY);
       _drag.clone.style.display='';
       const target=hit&&hit.closest('.habit-grid-item');
 
       if(_drag.over && _drag.over!==target) _drag.over.classList.remove('drag-over');
-      if(target && target!==div){
-        target.classList.add('drag-over');
-        _drag.over=target;
-      } else if(!target||target===div){
-        _drag.over=null;
-      }
+      if(target && target!==div){ target.classList.add('drag-over'); _drag.over=target; }
+      else _drag.over=null;
     });
 
-    div.addEventListener('pointerup', e=>{
+    div.addEventListener('pointerup', ()=>{
       if(_drag.el!==div) return;
-      if(!_drag.moved){
-        // tap = editace
-        _dragEnd(false);
-        openEditSheet(h.id);
-      } else {
-        _dragEnd(true);
-      }
+      if(!_drag.moved){ _dragEnd(false); openEditSheet(h.id); }
+      else _dragEnd(true);
     });
 
     div.addEventListener('pointercancel', ()=>{
