@@ -754,74 +754,23 @@ function toggleHabitState(id, action){
 
 /* ══ MANAGE GRID ══ */
 
-// Globální touch-drag stav (mimo renderManage, aby se neresetoval)
-let _td = {
-  active:false, srcIdx:null, srcEl:null, clone:null, overEl:null,
-  startX:0, startY:0, moved:false
-};
+let _drag = { el:null, idx:null, clone:null, over:null, ox:0, oy:0, moved:false };
 
-function _tdCleanup(commit){
-  if(_td.clone){ _td.clone.remove(); _td.clone=null; }
-  if(_td.srcEl) _td.srcEl.classList.remove('dragging');
-  if(_td.overEl) _td.overEl.classList.remove('drag-over');
-  if(commit && _td.overEl && _td.srcIdx!==null){
-    const targetIdx=parseInt(_td.overEl.dataset.idx);
-    if(!isNaN(targetIdx) && targetIdx!==_td.srcIdx){
-      const moved=habits.splice(_td.srcIdx,1)[0];
-      habits.splice(targetIdx,0,moved);
+function _dragEnd(commit){
+  if(_drag.clone){ _drag.clone.remove(); _drag.clone=null; }
+  if(_drag.el){ _drag.el.classList.remove('dragging'); _drag.el.releasePointerCapture && _drag.el._pid && _drag.el.releasePointerCapture(_drag.el._pid); }
+  if(_drag.over){ _drag.over.classList.remove('drag-over'); }
+  if(commit && _drag.over && _drag.idx!==null){
+    const ti=parseInt(_drag.over.dataset.idx);
+    if(!isNaN(ti) && ti!==_drag.idx){
+      const m=habits.splice(_drag.idx,1)[0];
+      habits.splice(ti,0,m);
       save(); renderManage(); render();
-    }
-  }
-  _td.active=false; _td.srcIdx=null; _td.srcEl=null; _td.overEl=null; _td.moved=false;
-}
-
-// Globální listenery — registrujeme jen jednou
-(function(){
-  document.addEventListener('touchmove', e=>{
-    if(!_td.active) return;
-    e.preventDefault();
-    const t=e.touches[0];
-    const dx=t.clientX-_td.startX, dy=t.clientY-_td.startY;
-    if(!_td.moved && Math.abs(dx)<8 && Math.abs(dy)<8) return;
-    _td.moved=true;
-
-    // Pohyb klonu
-    if(_td.clone){
-      _td.clone.style.left=(t.clientX - _td.clone._offX)+'px';
-      _td.clone.style.top =(t.clientY - _td.clone._offY)+'px';
-    }
-
-    // Najdi cíl pod prstem
-    if(_td.clone) _td.clone.style.display='none';
-    const el=document.elementFromPoint(t.clientX,t.clientY);
-    if(_td.clone) _td.clone.style.display='';
-    const target=el&&el.closest('.habit-grid-item');
-
-    if(_td.overEl && _td.overEl!==target) _td.overEl.classList.remove('drag-over');
-    if(target && target!==_td.srcEl){
-      target.classList.add('drag-over');
-      _td.overEl=target;
-    } else if(!target || target===_td.srcEl){
-      _td.overEl=null;
-    }
-  },{passive:false});
-
-  document.addEventListener('touchend', e=>{
-    if(!_td.active) return;
-    if(!_td.moved){
-      // bylo to tap — otevři edit
-      const idx=_td.srcIdx;
-      _tdCleanup(false);
-      if(idx!==null) openEditSheet(habits[idx]?.id);
       return;
     }
-    _tdCleanup(true);
-  });
-
-  document.addEventListener('touchcancel', ()=>{
-    if(_td.active) _tdCleanup(false);
-  });
-})();
+  }
+  _drag.el=null; _drag.idx=null; _drag.over=null; _drag.moved=false;
+}
 
 function renderManage(){
   const wrap=document.getElementById('manageGrid');
@@ -838,63 +787,68 @@ function renderManage(){
     div.dataset.idx=idx;
     div.innerHTML=`<div class="habit-grid-emoji">${h.emoji}</div><div class="habit-grid-name">${h.name}</div>`;
 
-    // Touch start — jen označit zdroj, klon vytvoříme až při pohybu
-    div.addEventListener('touchstart', e=>{
-      const t=e.touches[0];
-      _td.active=true;
-      _td.srcIdx=idx;
-      _td.srcEl=div;
-      _td.startX=t.clientX;
-      _td.startY=t.clientY;
-      _td.moved=false;
-      _td.overEl=null;
-      // Klon vytvoříme hned pro plynulost
+    div.addEventListener('pointerdown', e=>{
+      e.preventDefault();
+      div.setPointerCapture(e.pointerId);
+      div._pid=e.pointerId;
       const r=div.getBoundingClientRect();
-      _td.clone=div.cloneNode(true);
-      _td.clone._offX=t.clientX-r.left;
-      _td.clone._offY=t.clientY-r.top;
-      _td.clone.style.cssText=`
+      _drag.el=div; _drag.idx=idx; _drag.moved=false;
+      _drag.ox=e.clientX-r.left; _drag.oy=e.clientY-r.top;
+      _drag.over=null;
+
+      // Vytvoř klon
+      _drag.clone=div.cloneNode(true);
+      _drag.clone.style.cssText=`
         position:fixed;z-index:9999;pointer-events:none;
         width:${r.width}px;height:${r.height}px;
         left:${r.left}px;top:${r.top}px;
-        opacity:.9;transform:scale(1.1);
-        box-shadow:0 12px 32px rgba(0,0,0,.6);
-        border:1px solid var(--accent);
-        border-radius:13px;background:var(--card2);
-        display:flex;flex-direction:column;align-items:center;
-        justify-content:center;gap:6px;transition:none;
+        opacity:.9;transform:scale(1.08);
+        box-shadow:0 12px 32px rgba(0,0,0,.55);
+        border:1px solid var(--accent);border-radius:13px;
+        background:var(--card2);
+        display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
+        transition:none;
       `;
-      document.body.appendChild(_td.clone);
+      document.body.appendChild(_drag.clone);
+    });
+
+    div.addEventListener('pointermove', e=>{
+      if(_drag.el!==div) return;
+      _drag.moved=true;
       div.classList.add('dragging');
-    },{passive:true});
 
-    // Desktop drag (funguje na PC)
-    div.draggable=true;
-    let deskDragSrc=null;
-    div.addEventListener('dragstart',e=>{
-      deskDragSrc=idx; div.classList.add('dragging');
-      e.dataTransfer.effectAllowed='move';
-    });
-    div.addEventListener('dragend',()=>{
-      div.classList.remove('dragging');
-      grid.querySelectorAll('.habit-grid-item').forEach(el=>el.classList.remove('drag-over'));
-    });
-    div.addEventListener('dragover',e=>{ e.preventDefault(); e.dataTransfer.dropEffect='move'; });
-    div.addEventListener('dragenter',()=>{ if(deskDragSrc!==idx) div.classList.add('drag-over'); });
-    div.addEventListener('dragleave',()=>div.classList.remove('drag-over'));
-    div.addEventListener('drop',e=>{
-      e.preventDefault();
-      div.classList.remove('drag-over');
-      if(deskDragSrc===null||deskDragSrc===idx) return;
-      const moved=habits.splice(deskDragSrc,1)[0];
-      habits.splice(idx,0,moved);
-      deskDragSrc=null;
-      save(); renderManage(); render();
+      // Pohyb klonu
+      _drag.clone.style.left=(e.clientX-_drag.ox)+'px';
+      _drag.clone.style.top =(e.clientY-_drag.oy)+'px';
+
+      // Najdi cíl
+      _drag.clone.style.display='none';
+      const hit=document.elementFromPoint(e.clientX, e.clientY);
+      _drag.clone.style.display='';
+      const target=hit&&hit.closest('.habit-grid-item');
+
+      if(_drag.over && _drag.over!==target) _drag.over.classList.remove('drag-over');
+      if(target && target!==div){
+        target.classList.add('drag-over');
+        _drag.over=target;
+      } else if(!target||target===div){
+        _drag.over=null;
+      }
     });
 
-    // Tap na desktopu (bez drag)
-    div.addEventListener('click', e=>{
-      if(!div.classList.contains('dragging')) openEditSheet(h.id);
+    div.addEventListener('pointerup', e=>{
+      if(_drag.el!==div) return;
+      if(!_drag.moved){
+        // tap = editace
+        _dragEnd(false);
+        openEditSheet(h.id);
+      } else {
+        _dragEnd(true);
+      }
+    });
+
+    div.addEventListener('pointercancel', ()=>{
+      if(_drag.el===div) _dragEnd(false);
     });
 
     grid.appendChild(div);
