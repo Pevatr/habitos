@@ -62,7 +62,6 @@ body::before{
 .screens{flex:1;overflow:hidden;position:relative;z-index:1;}
 .screen{
   position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;
-  touch-action:pan-y;
   padding:14px 16px 20px;display:none;-webkit-overflow-scrolling:touch;
 }
 .screen.active{display:block;animation:screenIn .2s ease;}
@@ -90,17 +89,21 @@ body::before{
 .nav-add-wrap{display:none;}
 .nav-add{display:none;}
 
-/* HABIT GRID (settings) */
-.habit-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:6px;touch-action:none;}
+.habit-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:6px;}
 .habit-grid-item{
   background:var(--card2);border:1px solid var(--border);border-radius:13px;
   padding:14px 8px 12px;display:flex;flex-direction:column;align-items:center;
-  gap:6px;cursor:grab;transition:opacity .15s,transform .15s,border-color .15s,background .15s;
-  touch-action:none;user-select:none;-webkit-user-select:none;position:relative;
+  gap:6px;cursor:pointer;transition:opacity .15s,transform .15s,border-color .15s,background .15s;
+  user-select:none;-webkit-user-select:none;position:relative;
 }
-.habit-grid-item:active{cursor:grabbing;}
-.habit-grid-item.dragging{opacity:.35;transform:scale(.94);}
-.habit-grid-item.drag-over{border-color:var(--accent);background:rgba(34,197,94,.1);}
+.habit-grid-item.drag-ready{
+  border-color:var(--accent);background:rgba(34,197,94,.1);
+  transform:scale(1.06);box-shadow:0 8px 24px rgba(0,0,0,.4);
+  animation:dragPulse .35s ease;
+}
+@keyframes dragPulse{0%{transform:scale(1)}60%{transform:scale(1.1)}100%{transform:scale(1.06)}}
+.habit-grid-item.dragging{opacity:.3;transform:scale(.95);}
+.habit-grid-item.drag-over{border-color:var(--accent);background:rgba(34,197,94,.15);}
 .habit-grid-emoji{font-size:1.8rem;pointer-events:none;}
 .habit-grid-name{font-size:.68rem;font-weight:700;text-align:center;color:var(--text);line-height:1.2;pointer-events:none;}
 .drag-hint{font-size:.6rem;color:var(--muted);text-align:center;padding:0 2px 12px;}
@@ -755,25 +758,53 @@ function toggleHabitState(id, action){
 
 /* ══ MANAGE GRID ══ */
 
-let _drag = { el:null, idx:null, clone:null, over:null, ox:0, oy:0, moved:false };
+/* ══ MANAGE GRID ══ */
 
-function _dragEnd(commit){
-  // Obnoví scroll na .screen
-  document.querySelectorAll('.screen').forEach(s=>s.style.overflowY='');
+let _drag = { armed:false, el:null, idx:null, clone:null, over:null, ox:0, oy:0, timer:null };
+
+function _dragCancel(){
+  clearTimeout(_drag.timer); _drag.timer=null;
   if(_drag.clone){ _drag.clone.remove(); _drag.clone=null; }
-  if(_drag.el){ _drag.el.classList.remove('dragging'); }
+  if(_drag.el){ _drag.el.classList.remove('dragging','drag-ready'); }
   if(_drag.over){ _drag.over.classList.remove('drag-over'); }
-  if(commit && _drag.over && _drag.idx!==null){
-    const ti=parseInt(_drag.over.dataset.idx);
-    if(!isNaN(ti) && ti!==_drag.idx){
-      const m=habits.splice(_drag.idx,1)[0];
+  document.removeEventListener('touchmove', _onTouchMove);
+  document.removeEventListener('touchend',  _onTouchEnd);
+  document.removeEventListener('touchcancel',_onTouchCancel);
+  _drag.armed=false; _drag.el=null; _drag.idx=null; _drag.over=null;
+}
+
+function _dragCommit(){
+  const over=_drag.over, srcIdx=_drag.idx;
+  _dragCancel();
+  if(over && srcIdx!==null){
+    const ti=parseInt(over.dataset.idx);
+    if(!isNaN(ti) && ti!==srcIdx){
+      const m=habits.splice(srcIdx,1)[0];
       habits.splice(ti,0,m);
       save(); renderManage(); render();
-      return;
     }
   }
-  _drag.el=null; _drag.idx=null; _drag.over=null; _drag.moved=false;
 }
+
+function _onTouchMove(e){
+  if(!_drag.armed) return;
+  e.preventDefault();
+  const t=e.touches[0];
+  if(_drag.clone){
+    _drag.clone.style.left=(t.clientX-_drag.ox)+'px';
+    _drag.clone.style.top =(t.clientY-_drag.oy)+'px';
+  }
+  // najdi cíl
+  _drag.clone.style.visibility='hidden';
+  const hit=document.elementFromPoint(t.clientX, t.clientY);
+  _drag.clone.style.visibility='';
+  const target=hit && hit.closest('.habit-grid-item');
+  if(_drag.over && _drag.over!==target) _drag.over.classList.remove('drag-over');
+  if(target && target!==_drag.el){ target.classList.add('drag-over'); _drag.over=target; }
+  else if(!target||target===_drag.el){ _drag.over=null; }
+}
+function _onTouchEnd(){ _dragCommit(); }
+function _onTouchCancel(){ _dragCancel(); }
 
 function renderManage(){
   const wrap=document.getElementById('manageGrid');
@@ -781,7 +812,7 @@ function renderManage(){
     wrap.innerHTML='<div style="font-size:.82rem;color:var(--muted);padding:4px 2px 12px">Zatím žádné návyky. Přidej první klepnutím níže.</div>';
     return;
   }
-  wrap.innerHTML='<div class="habit-grid" id="habitGridInner"></div><div class="drag-hint">✥ Přetažením změníš pořadí — projeví se i v Dnes</div>';
+  wrap.innerHTML='<div class="habit-grid" id="habitGridInner"></div><div class="drag-hint">✥ Podržením karty aktivuješ přesouvání</div>';
   const grid=document.getElementById('habitGridInner');
 
   habits.forEach((h,idx)=>{
@@ -790,59 +821,49 @@ function renderManage(){
     div.dataset.idx=idx;
     div.innerHTML=`<div class="habit-grid-emoji">${h.emoji}</div><div class="habit-grid-name">${h.name}</div>`;
 
-    div.addEventListener('pointerdown', e=>{
-      e.preventDefault();
-      e.stopPropagation();
-      div.setPointerCapture(e.pointerId);
-      const r=div.getBoundingClientRect();
-      _drag.el=div; _drag.idx=idx; _drag.moved=false; _drag.over=null;
-      _drag.ox=e.clientX-r.left; _drag.oy=e.clientY-r.top;
+    // Tap = edit
+    div.addEventListener('click', ()=>{ if(!_drag.armed) openEditSheet(h.id); });
 
-      // Zablokuj scroll na .screen během dragu
-      document.querySelectorAll('.screen').forEach(s=>s.style.overflowY='hidden');
+    // Long press → arm drag
+    div.addEventListener('touchstart', e=>{
+      const t=e.touches[0];
+      _drag.timer=setTimeout(()=>{
+        // Vibrovat pokud je k dispozici
+        if(navigator.vibrate) navigator.vibrate(40);
+        const r=div.getBoundingClientRect();
+        _drag.armed=true;
+        _drag.el=div; _drag.idx=idx; _drag.over=null;
+        _drag.ox=t.clientX-r.left; _drag.oy=t.clientY-r.top;
+        div.classList.add('drag-ready');
+        setTimeout(()=>div.classList.add('dragging'),50);
 
-      _drag.clone=div.cloneNode(true);
-      _drag.clone.style.cssText=`
-        position:fixed;z-index:9999;pointer-events:none;
-        width:${r.width}px;height:${r.height}px;
-        left:${r.left}px;top:${r.top}px;
-        opacity:.9;transform:scale(1.08);
-        box-shadow:0 12px 32px rgba(0,0,0,.55);
-        border:1px solid var(--accent);border-radius:13px;
-        background:var(--card2);
-        display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
-        transition:none;
-      `;
-      document.body.appendChild(_drag.clone);
-    });
+        // Klon
+        _drag.clone=div.cloneNode(true);
+        _drag.clone.classList.remove('dragging','drag-ready');
+        _drag.clone.style.cssText=`
+          position:fixed;z-index:9999;pointer-events:none;
+          width:${r.width}px;height:${r.height}px;
+          left:${t.clientX-_drag.ox}px;top:${t.clientY-_drag.oy}px;
+          opacity:.92;transform:scale(1.1);
+          box-shadow:0 16px 40px rgba(0,0,0,.6);
+          border:1px solid var(--accent);border-radius:13px;
+          background:var(--card2);
+          display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
+          transition:none;
+        `;
+        document.body.appendChild(_drag.clone);
 
-    div.addEventListener('pointermove', e=>{
-      if(_drag.el!==div) return;
-      _drag.moved=true;
-      div.classList.add('dragging');
+        // Globální listenery pro pohyb
+        document.addEventListener('touchmove',   _onTouchMove,  {passive:false});
+        document.addEventListener('touchend',    _onTouchEnd,   {passive:true});
+        document.addEventListener('touchcancel', _onTouchCancel,{passive:true});
+      }, 480);
+    },{passive:true});
 
-      _drag.clone.style.left=(e.clientX-_drag.ox)+'px';
-      _drag.clone.style.top =(e.clientY-_drag.oy)+'px';
-
-      _drag.clone.style.display='none';
-      const hit=document.elementFromPoint(e.clientX, e.clientY);
-      _drag.clone.style.display='';
-      const target=hit&&hit.closest('.habit-grid-item');
-
-      if(_drag.over && _drag.over!==target) _drag.over.classList.remove('drag-over');
-      if(target && target!==div){ target.classList.add('drag-over'); _drag.over=target; }
-      else _drag.over=null;
-    });
-
-    div.addEventListener('pointerup', ()=>{
-      if(_drag.el!==div) return;
-      if(!_drag.moved){ _dragEnd(false); openEditSheet(h.id); }
-      else _dragEnd(true);
-    });
-
-    div.addEventListener('pointercancel', ()=>{
-      if(_drag.el===div) _dragEnd(false);
-    });
+    // Zruš long press pokud se prst pohnul nebo zvedl dříve
+    div.addEventListener('touchmove',  ()=>{ if(!_drag.armed){ clearTimeout(_drag.timer); _drag.timer=null; } },{passive:true});
+    div.addEventListener('touchend',   ()=>{ if(!_drag.armed){ clearTimeout(_drag.timer); _drag.timer=null; } },{passive:true});
+    div.addEventListener('touchcancel',()=>{ clearTimeout(_drag.timer); _drag.timer=null; },{passive:true});
 
     grid.appendChild(div);
   });
