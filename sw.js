@@ -1,4 +1,4 @@
-const CACHE = 'habitos-v2';
+const CACHE = 'habitos-v3';
 const FILES = ['./index.html', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', e => {
